@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>機率控制扭蛋機</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        @keyframes drop-animation {
+            0% { transform: translateY(0) scale(1) rotate(0deg); opacity: 1; }
+            100% { transform: translateY(220px) scale(0.9) rotate(720deg); opacity: 0; }
+        }
+        .gacha-dropping { animation: drop-animation 0.7s cubic-bezier(0.5, 0, 1, 1) forwards; }
+        
+        @keyframes spin-handle {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .handle-spinning { animation: spin-handle 0.4s ease-in-out 1; }
+        
+        .knob-design::before {
+            content: ''; position: absolute; top: 50%; left: 50%;
+            width: 75%; height: 10px; background-color: #f3f4f6;
+            transform: translate(-50%, -50%); border-radius: 99px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body class="bg-slate-800 flex items-center justify-center min-h-screen p-4">
+
+<div id="app" class="relative">
+
+    <div class="relative w-[320px] h-[500px] flex flex-col items-center">
+        <svg class="w-full h-auto" viewBox="0 0 300 450" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="50" y="50" width="200" height="200" rx="100" fill="#E5E7EB" stroke="#D1D5DB" stroke-width="4"/>
+            <path d="M50 150C50 94.7715 94.7715 50 150 50C205.228 50 250 94.7715 250 150" fill="#FCA5A5" fill-opacity="0.3"/>
+            
+            <rect x="80" y="230" width="140" height="200" rx="15" fill="#DC2626"/>
+            
+            <circle cx="150" cy="300" r="30" fill="#374151"/>
+            
+            <rect x="110" y="380" width="80" height="30" rx="5" fill="#4B5563"/>
+        </svg>
+
+        <div class="absolute top-16 left-1/2 transform -translate-x-1/2 w-[180px] h-[180px] overflow-hidden rounded-full pointer-events-none">
+            <div class="absolute w-full h-full">
+                <div v-for="i in 20" :key="i" 
+                    :style="{ 
+                        top: `${Math.random() * 100}%`, 
+                        left: `${Math.random() * 100}%`,
+                        backgroundColor: ['#FCD34D', '#F87171', '#60A5FA', '#34D399'][i % 4]
+                    }" 
+                    class="absolute w-10 h-10 rounded-full opacity-100">
+                </div>
+            </div>
+        </div>
+
+        <button 
+            @click="playGacha" 
+            :disabled="isProcessing"
+            class="knob-design absolute top-[285px] left-[150px] transform -translate-x-1/2 w-16 h-16 rounded-full bg-amber-400 border-4 border-slate-900 shadow-xl transition active:scale-90 disabled:opacity-80"
+            :class="{'handle-spinning': isSpinning}">
+        </button>
+
+        <div v-if="isDropping" 
+             class="absolute top-[220px] w-12 h-12 rounded-full z-20 gacha-dropping flex items-center justify-center border-2 border-white/30 shadow-lg"
+             :class="currentReward.ballColor">
+        </div>
+    </div>
+
+    <div v-if="showModal" class="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-6 backdrop-blur-md">
+        <div class="bg-white rounded-3xl p-8 w-full max-w-sm text-center shadow-2xl">
+            <p :class="currentReward.textColor" class="font-black tracking-widest mb-2 uppercase">{{ currentReward.tier }}</p>
+            
+            <div class="relative w-50 h-32 mx-auto mb-6">
+                <div class="absolute inset-0 bg-yellow-100 rounded-full animate-pulse opacity-20"></div>
+                <img :src="currentReward.image" class="w-full h-full object-contain relative z-10">
+            </div>
+            
+            <h3 class="text-3xl font-bold text-sky-600 mb-2">{{ currentReward.name }}</h3>
+            <p class="text-slate-500 mb-8">{{ currentReward.description }}</p>
+            
+            <button @click="showModal = false" class="w-full py-4 bg-rose-500 text-white rounded-2xl font-bold hover:bg-rose-800 transition">
+                太棒了！
+            </button>
+        </div>
+    </div>
+
+    <audio ref="audioSpin" src="audio/running-gear.mp3"></audio>
+    <audio ref="audioWin" src="audio/purchase-succesful-ingame-230550.mp3"></audio>
+
+</div>
+
+<script>
+const { createApp, ref } = Vue
+
+// ==========================================
+// 🛠️ 獎項與機率設定區 (Weight 越大機率越高)
+// ==========================================
+const REWARD_CONFIG = [
+    { 
+        tier: '特獎', 
+        name: '全系列八折', 
+        image: '../images/img20.svg',
+        description: '記得截圖保存起來唷！',
+        ballColor: 'bg-yellow-400', 
+        textColor: 'text-yellow-500',
+        weight: 1 // 1%
+    },
+    { 
+        tier: '一獎', 
+        name: '新書八五折', 
+        image: '../images/img15.svg',
+        description: '記得截圖保存起來唷！',
+        ballColor: 'bg-red-500', 
+        textColor: 'text-red-500',
+        weight: 9 // 9%
+    },
+    { 
+        tier: '二獎', 
+        name: '全系列九折', 
+        image: '../images/img10.svg',
+        description: '記得截圖保存起來唷！',
+        ballColor: 'bg-blue-500', 
+        textColor: 'text-blue-500',
+        weight: 30 // 30%
+    },
+    { 
+        tier: '三獎', 
+        name: '新書九五折', 
+        image: '../images/img05.svg',
+        description: '記得截圖保存起來唷！',
+        ballColor: 'bg-slate-400', 
+        textColor: 'text-slate-500',
+        weight: 60 // 60%
+    }
+];
+
+createApp({
+    setup() {
+        const isSpinning = ref(false);
+        const isDropping = ref(false);
+        const isProcessing = ref(false);
+        const showModal = ref(false);
+        const currentReward = ref({});
+        const audioSpin = ref(null);
+        const audioWin = ref(null);
+
+        // 核心邏輯：權重隨機抽取
+        const getWeightedReward = () => {
+            const totalWeight = REWARD_CONFIG.reduce((sum, item) => sum + item.weight, 0);
+            let randomNum = Math.random() * totalWeight;
+            
+            for (const reward of REWARD_CONFIG) {
+                if (randomNum < reward.weight) {
+                    return reward;
+                }
+                randomNum -= reward.weight;
+            }
+        };
+
+        const playGacha = () => {
+            if (isProcessing.value) return;
+            
+            isProcessing.value = true;
+            isSpinning.value = true;
+            
+            // 決定抽中哪個獎
+            currentReward.value = getWeightedReward();
+
+            if (audioSpin.value) {
+                audioSpin.value.currentTime = 0;
+                audioSpin.value.play();
+            }
+
+            setTimeout(() => {
+                isSpinning.value = false;
+                isDropping.value = true;
+                
+                setTimeout(() => {
+                    isDropping.value = false;
+                    showModal.value = true;
+                    isProcessing.value = false;
+                    
+                    if (audioWin.value) {
+                        audioWin.value.currentTime = 0;
+                        audioWin.value.play();
+                    }
+                }, 700);
+            }, 600);
+        };
+
+        return {
+            isSpinning, isDropping, isProcessing, showModal,
+            currentReward, audioSpin, audioWin,
+            playGacha
+        }
+    }
+}).mount('#app')
+</script>
+</body>
+</html>
